@@ -1,0 +1,13 @@
+<RCC>
+    <qresource prefix="/">
+        <file>ARSDK/packages/libARCommands/Xml/ARDrone3_commands.xml</file>
+        <file>ARSDK/packages/libARCommands/Xml/common_commands.xml</file>
+        <file>ARSDK/packages/libARCommands/Xml/common_debug.xml</file>
+        <file>ARSDK/packages/libARCommands/Xml/JumpingSumo_commands.xml</file>
+        <file>ARSDK/packages/libARCommands/Xml/MiniDrone_commands.xml</file>
+        <file>ARSDK/packages/libARCommands/Xml/pro_commands.xml</file>
+        <file>ARSDK/packages/libARCommands/Xml/SkyController_commands.xml</file>
+        <file>ARSDK/packages/libARCommands/Xml/UnknownFeature_1_commands.xml</file>
+        <file>ARSDK/packages/libARCommands/Xml/wifi_feature_commands.xml</file>
+    </qresource>
+</RCC>
