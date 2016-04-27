@@ -13,3 +13,8 @@ $ repo sync
 $ cd ..
 $ qmake && make && make install
 ```
+
+## Examples
+
+Example usage can be found in the https://github.com/RadialBlue/qt-arsdk-examples.git repository.
+
