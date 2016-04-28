@@ -22,7 +22,7 @@
 #include "common.h"
 
 #include "ardevice.h"
-#include "arconnector.h"
+#include "arnetdiscovery.h"
 
 #include "arcommandcodec.h"
 #include "arcommanddictionary.h"
@@ -44,7 +44,7 @@ struct ARControllerPrivate
 {
     ARControllerPrivate()
         : device(NULL),
-          connector(NULL),
+          discovery(NULL),
           c2d(NULL),
           d2c(NULL),
           codec(NULL),
@@ -63,7 +63,7 @@ struct ARControllerPrivate
 
     // Device information and discovery.
     ARDevice    *device;
-    ARConnector *connector;
+    ARNetDiscovery *discovery;
 
     QString     errorString;
 
@@ -197,7 +197,7 @@ ARController::ControllerStatus ARController::status() const
 {
     Q_D(const ARController);
 
-    if(d->connector != NULL)
+    if(d->discovery != NULL)
     {
         return ARController::Connecting;
     }
@@ -271,7 +271,7 @@ bool ARController::connectToDevice(const QString &address, quint16 port)
         return false;
     }
 
-    if(d->connector)
+    if(d->discovery)
     {
         d->errorString = "Device discovery already in progress";
         WARNING_T(d->errorString);
@@ -286,11 +286,11 @@ bool ARController::connectToDevice(const QString &address, quint16 port)
     QObject::connect(d->d2c, SIGNAL(readyRead()), this, SLOT(d2cRead()));
 
     // Setup TCP discovery connector.
-    d->connector = new ARConnector(this);
-    d->connector->connect(address, port);
+    d->discovery = new ARNetDiscovery(this);
+    d->discovery->connectToHost(address, port);
 
-    QObject::connect(d->connector, SIGNAL(connected(ARDevice*)), this, SLOT(onConnected(ARDevice*)));
-    QObject::connect(d->connector, SIGNAL(failed(QString)), this, SLOT(onConnectFailed(QString)));
+    QObject::connect(d->discovery, SIGNAL(discovered(ARDevice*)), this, SLOT(onDiscovered(ARDevice*)));
+    QObject::connect(d->discovery, SIGNAL(failed(QString)), this, SLOT(onDiscoveryFailed(QString)));
 
     emit statusChanged();
     return true;
@@ -301,12 +301,12 @@ void ARController::shutdown()
     TRACE
     Q_D(ARController);
 
-    if(d->connector)
+    if(d->discovery)
     {
         DEBUG_T("Destroying device discovery connector.");
-        d->connector->stop();
-        d->connector->deleteLater();
-        d->connector = NULL;
+        d->discovery->stop();
+        d->discovery->deleteLater();
+        d->discovery = NULL;
     }
 
     if(d->c2d)
@@ -335,7 +335,7 @@ void ARController::shutdown()
     emit statusChanged();
 }
 
-void ARController::onConnected(ARDevice *device)
+void ARController::onDiscovered(ARDevice *device)
 {
     TRACE
     Q_D(ARController);
@@ -345,12 +345,12 @@ void ARController::onConnected(ARDevice *device)
     d->c2d = new QUdpSocket(this);
     d->c2d->connectToHost(device->address(), device->port());
 
-    d->connector->deleteLater();
-    d->connector = NULL;
+    d->discovery->deleteLater();
+    d->discovery = NULL;
     emit statusChanged();
 }
 
-void ARController::onConnectFailed(const QString &reason)
+void ARController::onDiscoveryFailed(const QString &reason)
 {
     TRACE
     Q_D(ARController);
@@ -358,8 +358,8 @@ void ARController::onConnectFailed(const QString &reason)
     d->d2c->deleteLater();
     d->d2c = NULL;
 
-    d->connector->deleteLater();
-    d->connector = NULL;
+    d->discovery->deleteLater();
+    d->discovery = NULL;
 
     d->errorString = reason;
 

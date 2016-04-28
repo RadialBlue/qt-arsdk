@@ -18,8 +18,8 @@
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 
 */
-#ifndef ARCONNECTOR_H
-#define ARCONNECTOR_H
+#ifndef ARNETDISCOVERY_H
+#define ARNETDISCOVERY_H
 
 #include <QObject>
 
@@ -28,20 +28,20 @@
 class ARController;
 class ARDevice;
 
-class ARConnector : public QObject
+class ARNetDiscovery : public QObject
 {
     Q_OBJECT
 
 public:
-    explicit ARConnector(ARController *controller);
-            ~ARConnector();
+    explicit ARNetDiscovery(ARController *controller);
+            ~ARNetDiscovery();
 
 public Q_SLOTS:
-    bool connect(const QString &address, quint16 port = ARDISCOVERY_DEFAULT_PORT);
+    bool connectToHost(const QString &address, quint16 port = ARDISCOVERY_DEFAULT_PORT);
     void stop();
 
 Q_SIGNALS:
-    void connected(ARDevice *device);
+    void discovered(ARDevice *device);
     void failed(const QString &reason);
 
 protected Q_SLOTS:
@@ -51,9 +51,9 @@ protected Q_SLOTS:
     void onSocketReadyRead();
 
 private:
-    class ARConnectorPrivate *d_ptr;
+    class ARNetDiscoveryPrivate *d_ptr;
 
-    Q_DECLARE_PRIVATE(ARConnector)
+    Q_DECLARE_PRIVATE(ARNetDiscovery)
 };
 
 #endif // ARCONNECTOR_H

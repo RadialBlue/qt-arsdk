@@ -136,8 +136,8 @@ protected Q_SLOTS:
     bool sendCommand(ARCommandInfo *command, const QVariantMap &params);
     bool sendCommand(int projId, int classId, int commandId, const QVariantMap &params);
 
-    void onConnected(ARDevice *device);
-    void onConnectFailed(const QString &reason);
+    void onDiscovered(ARDevice *device);
+    void onDiscoveryFailed(const QString &reason);
 
 protected:
     void onPing(const ARFrame &frame);

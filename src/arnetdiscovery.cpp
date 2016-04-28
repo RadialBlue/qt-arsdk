@@ -18,7 +18,7 @@
     Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
 
 */
-#include "arconnector.h"
+#include "arnetdiscovery.h"
 
 #include "arcontroller.h"
 #include "ardevice.h"
@@ -30,9 +30,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-struct ARConnectorPrivate
+struct ARNetDiscoveryPrivate
 {
-    ARConnectorPrivate(ARController *pController)
+    ARNetDiscoveryPrivate(ARController *pController)
         : controller(pController), socket(NULL)
     { /* ... */ }
 
@@ -40,22 +40,22 @@ struct ARConnectorPrivate
     QTcpSocket   *socket;
 };
 
-ARConnector::ARConnector(ARController *controller)
-    : QObject(controller), d_ptr(new ARConnectorPrivate(controller))
+ARNetDiscovery::ARNetDiscovery(ARController *controller)
+    : QObject(controller), d_ptr(new ARNetDiscoveryPrivate(controller))
 {
     TRACE
 }
 
-ARConnector::~ARConnector()
+ARNetDiscovery::~ARNetDiscovery()
 {
     TRACE
     delete d_ptr;
 }
 
-bool ARConnector::connect(const QString &address, quint16 port)
+bool ARNetDiscovery::connectToHost(const QString &address, quint16 port)
 {
     TRACE
-    Q_D(ARConnector);
+    Q_D(ARNetDiscovery);
 
     if(d->socket != NULL)
     {
@@ -75,28 +75,28 @@ bool ARConnector::connect(const QString &address, quint16 port)
     return true;
 }
 
-void ARConnector::stop()
+void ARNetDiscovery::stop()
 {
     TRACE
-    Q_D(ARConnector);
+    Q_D(ARNetDiscovery);
 
     d->socket->close();
     d->socket->deleteLater();
     d->socket = NULL;
 }
 
-void ARConnector::onSocketError()
+void ARNetDiscovery::onSocketError()
 {
     TRACE
-    Q_D(ARConnector);
+    Q_D(ARNetDiscovery);
     WARNING_T(d->socket->errorString());
     emit failed(d->socket->errorString());
 }
 
-void ARConnector::onSocketConnected()
+void ARNetDiscovery::onSocketConnected()
 {
     TRACE
-    Q_D(ARConnector);
+    Q_D(ARNetDiscovery);
     QObject::connect(d->socket, SIGNAL(readyRead()), this, SLOT(onSocketReadyRead()));
 
     QJsonObject mesg;
@@ -110,16 +110,16 @@ void ARConnector::onSocketConnected()
     d->socket->write(data);
 }
 
-void ARConnector::onSocketDisconnected()
+void ARNetDiscovery::onSocketDisconnected()
 {
     TRACE
     DEBUG_T("Discovery socket disconnected.");
 }
 
-void ARConnector::onSocketReadyRead()
+void ARNetDiscovery::onSocketReadyRead()
 {
     TRACE
-    Q_D(ARConnector);
+    Q_D(ARNetDiscovery);
     QByteArray data = d->socket->readLine();
     DEBUG_T(QString("RECV: %1").arg(QString(data)));
 
@@ -158,5 +158,5 @@ void ARConnector::onSocketReadyRead()
 
     DEBUG_T("Registration successfull!");
     d->socket->close();
-    emit connected(device);
+    emit discovered(device);
 }
