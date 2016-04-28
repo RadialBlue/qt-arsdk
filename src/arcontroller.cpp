@@ -21,7 +21,7 @@
 #include "arcontroller.h"
 #include "common.h"
 
-#include "ardevice.h"
+#include "ardiscoverydevice.h"
 #include "arnetdiscovery.h"
 
 #include "arcommandcodec.h"
@@ -62,7 +62,7 @@ struct ARControllerPrivate
     quint16 controllerPort;
 
     // Device information and discovery.
-    ARDevice    *device;
+    ARDiscoveryDevice    *device;
     ARNetDiscovery *discovery;
 
     QString     errorString;
@@ -181,7 +181,7 @@ void ARController::setControllerPort(quint16 controllerPort)
     }
 }
 
-ARDevice* ARController::device() const
+ARDiscoveryDevice* ARController::device() const
 {
     Q_D(const ARController);
     return d->device;
@@ -289,7 +289,7 @@ bool ARController::connectToDevice(const QString &address, quint16 port)
     d->discovery = new ARNetDiscovery(this);
     d->discovery->connectToHost(address, port);
 
-    QObject::connect(d->discovery, SIGNAL(discovered(ARDevice*)), this, SLOT(onDiscovered(ARDevice*)));
+    QObject::connect(d->discovery, SIGNAL(discovered(ARDiscoveryDevice*)), this, SLOT(onDiscovered(ARDiscoveryDevice*)));
     QObject::connect(d->discovery, SIGNAL(failed(QString)), this, SLOT(onDiscoveryFailed(QString)));
 
     emit statusChanged();
@@ -304,7 +304,7 @@ void ARController::shutdown()
     if(d->discovery)
     {
         DEBUG_T("Destroying device discovery connector.");
-        d->discovery->stop();
+        d->discovery->shutdown();
         d->discovery->deleteLater();
         d->discovery = NULL;
     }
@@ -335,7 +335,7 @@ void ARController::shutdown()
     emit statusChanged();
 }
 
-void ARController::onDiscovered(ARDevice *device)
+void ARController::onDiscovered(ARDiscoveryDevice *device)
 {
     TRACE
     Q_D(ARController);
@@ -343,7 +343,8 @@ void ARController::onDiscovered(ARDevice *device)
 
     // Setup UDP port for C2D comms.
     d->c2d = new QUdpSocket(this);
-    d->c2d->connectToHost(device->address(), device->port());
+    d->c2d->connectToHost(device->address(),
+                          device->parameters().value(ARDISCOVERY_KEY_C2DPORT).toInt());
 
     d->discovery->deleteLater();
     d->discovery = NULL;

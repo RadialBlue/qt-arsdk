@@ -26,23 +26,27 @@
 #include "config.h"
 
 class ARController;
-class ARDevice;
+class ARDiscoveryDevice;
 
 class ARNetDiscovery : public QObject
 {
     Q_OBJECT
 
+    Q_PROPERTY(QString errorString READ errorString NOTIFY error)
+
 public:
     explicit ARNetDiscovery(ARController *controller);
             ~ARNetDiscovery();
 
+    QString errorString() const;
+
 public Q_SLOTS:
     bool connectToHost(const QString &address, quint16 port = ARDISCOVERY_DEFAULT_PORT);
-    void stop();
+    void shutdown();
 
 Q_SIGNALS:
-    void discovered(ARDevice *device);
-    void failed(const QString &reason);
+    void discovered(ARDiscoveryDevice *device);
+    void error();
 
 protected Q_SLOTS:
     void onSocketError();

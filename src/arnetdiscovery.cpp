@@ -21,7 +21,7 @@
 #include "arnetdiscovery.h"
 
 #include "arcontroller.h"
-#include "ardevice.h"
+#include "ardiscoverydevice.h"
 
 #include "common.h"
 
@@ -38,6 +38,8 @@ struct ARNetDiscoveryPrivate
 
     ARController *controller;
     QTcpSocket   *socket;
+
+    QString errorString;
 };
 
 ARNetDiscovery::ARNetDiscovery(ARController *controller)
@@ -49,7 +51,14 @@ ARNetDiscovery::ARNetDiscovery(ARController *controller)
 ARNetDiscovery::~ARNetDiscovery()
 {
     TRACE
+    shutdown();
     delete d_ptr;
+}
+
+QString ARNetDiscovery::errorString() const
+{
+    Q_D(const ARNetDiscovery);
+    return d->errorString;
 }
 
 bool ARNetDiscovery::connectToHost(const QString &address, quint16 port)
@@ -59,7 +68,8 @@ bool ARNetDiscovery::connectToHost(const QString &address, quint16 port)
 
     if(d->socket != NULL)
     {
-        emit failed("Discovery socket already initialized!");
+        d->errorString = "Discovery socket already initialized!";
+        emit error();
         return false;
     }
 
@@ -75,7 +85,7 @@ bool ARNetDiscovery::connectToHost(const QString &address, quint16 port)
     return true;
 }
 
-void ARNetDiscovery::stop()
+void ARNetDiscovery::shutdown()
 {
     TRACE
     Q_D(ARNetDiscovery);
@@ -89,8 +99,8 @@ void ARNetDiscovery::onSocketError()
 {
     TRACE
     Q_D(ARNetDiscovery);
-    WARNING_T(d->socket->errorString());
-    emit failed(d->socket->errorString());
+    d->errorString = d->socket->errorString();
+    emit error();
 }
 
 void ARNetDiscovery::onSocketConnected()
@@ -100,13 +110,13 @@ void ARNetDiscovery::onSocketConnected()
     QObject::connect(d->socket, SIGNAL(readyRead()), this, SLOT(onSocketReadyRead()));
 
     QJsonObject mesg;
-    mesg.insert("controller_type", d->controller->controllerType());
-    mesg.insert("controller_name", d->controller->controllerName());
-    mesg.insert("d2c_port",        d->controller->controllerPort());
+    mesg.insert(ARDISCOVERY_KEY_CONTROLLER_TYPE, d->controller->controllerType());
+    mesg.insert(ARDISCOVERY_KEY_CONTROLLER_NAME, d->controller->controllerName());
+    mesg.insert(ARDISCOVERY_KEY_D2CPORT,         d->controller->controllerPort());
 
     DEBUG_T("Discovery socket connected, sending registration.");
     QByteArray data = QJsonDocument(mesg).toJson(QJsonDocument::Compact);
-    DEBUG_T(QString("SENT: %1").arg(QString(data)));
+    DEBUG_T(QString("TX: %1").arg(QString(data)));
     d->socket->write(data);
 }
 
@@ -120,43 +130,44 @@ void ARNetDiscovery::onSocketReadyRead()
 {
     TRACE
     Q_D(ARNetDiscovery);
-    QByteArray data = d->socket->readLine();
-    DEBUG_T(QString("RECV: %1").arg(QString(data)));
+
+    QByteArray data = d->socket->readAll();
+    d->socket->close();
+    d->socket->deleteLater();
+    d->socket = NULL;
+
+    DEBUG_T(QString("RX: %1").arg(QString(data)));
 
     if(data.at(data.length() - 1) == 0x00) data.chop(1);
 
-    QJsonParseError error;
-    QJsonDocument mesg = QJsonDocument::fromJson(data, &error);
-    if(error.error != QJsonParseError::NoError) {
-        WARNING_T(QString("JSON Parse Error: %1").arg(error.errorString()));
+    // Parse handshake response message.
+    QJsonParseError parseError;
+    QJsonDocument mesg = QJsonDocument::fromJson(data, &parseError);
+    if(parseError.error != QJsonParseError::NoError) {
+        WARNING_T(QString("KEY Parse Error: %1").arg(parseError.errorString()));
+
+        d->errorString = "Failed to parse incoming message: " + parseError.errorString();
+        emit error();
         return;
     }
 
+    // Check return status of handshake response message.
     QJsonObject props = mesg.object();
-    if(props.value("status").toInt(1) != 0) {
-        d->socket->close();
-        d->socket->deleteLater();
-        d->socket = NULL;
+    if(props.value("status").toInt(1) == 0)
+    {
+        // Build discovery device instance.
+        ARDiscoveryDevice *device = new ARDiscoveryDevice(d->controller);
+        device->setAddress(d->socket->peerAddress().toString());
+        device->setParameters(props);
 
-        emit failed("Registration Failed: HANDSHAKE NOT SUCCESSFUL!");
-        return;
+        DEBUG_T("Successfully discovered device!");
+        emit discovered(device);
+    }
+    else
+    {
+        d->errorString = "Handshake returned error status.";
+        emit error();
     }
 
-    ARDevice *device = new ARDevice(d->controller);
-    // Device Properties
-    device->setAddress(d->socket->peerAddress().toString());
-
-    // Controller -> Device ports.
-    device->setPort(props.value("c2d_port").toInt());
-    device->setUpdatePort(props.value("c2d_update_port").toInt());
-    device->setUserPort(props.value("c2d_user_port").toInt());
-
-    // Device stream properties.
-    device->setStreamFragmentSize(props.value("arstream_fragment_size").toInt());
-    device->setStreamFragmentMax(props.value("arstream_fragment_maximum_number").toInt());
-    device->setStreamMaxAckInterval(props.value("arstream_max_ack_interval").toInt());
-
-    DEBUG_T("Registration successfull!");
-    d->socket->close();
-    emit discovered(device);
+    shutdown();
 }

@@ -24,12 +24,12 @@
 
 #include "arcontroller.h"
 #include "arcommandlistener.h"
-#include "ardevice.h"
+#include "ardiscoverydevice.h"
 
 void ARSDKPlugin::registerTypes(const char *uri)
 {
     // @uri arsdk
     qmlRegisterType<ARController>(uri, 1, 0, "ARController");
     qmlRegisterType<ARCommandListener>(uri, 1, 0, "ARCommandListener");
-    qmlRegisterType<ARDevice>(uri, 1, 0, "ARDevice");
+    qmlRegisterType<ARDiscoveryDevice>(uri, 1, 0, "ARDevice");
 }

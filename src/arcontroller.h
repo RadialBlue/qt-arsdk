@@ -25,7 +25,7 @@
 #include <QJSValue>
 #include <QQmlListProperty>
 
-class ARDevice;
+class ARDiscoveryDevice;
 class ARCommandInfo;
 class ARCommandListener;
 class ARFrame;
@@ -40,7 +40,7 @@ class ARController : public QObject
     Q_PROPERTY(QString controllerName READ controllerName WRITE setControllerName NOTIFY controllerNameChanged)
     Q_PROPERTY(quint16 controllerPort READ controllerPort WRITE setControllerPort NOTIFY controllerPortChanged)
 
-    Q_PROPERTY(ARDevice* device READ device NOTIFY deviceChanged)
+    Q_PROPERTY(ARDiscoveryDevice* device READ device NOTIFY deviceChanged)
 
     Q_PROPERTY(QString errorString READ errorString NOTIFY error)
 
@@ -85,7 +85,7 @@ public:
     quint16 controllerPort() const;
     Q_INVOKABLE void setControllerPort(quint16 controllerPort);
 
-    ARDevice* device() const;
+    ARDiscoveryDevice* device() const;
 
     QString errorString() const;
 
@@ -136,7 +136,7 @@ protected Q_SLOTS:
     bool sendCommand(ARCommandInfo *command, const QVariantMap &params);
     bool sendCommand(int projId, int classId, int commandId, const QVariantMap &params);
 
-    void onDiscovered(ARDevice *device);
+    void onDiscovered(ARDiscoveryDevice *device);
     void onDiscoveryFailed(const QString &reason);
 
 protected:
