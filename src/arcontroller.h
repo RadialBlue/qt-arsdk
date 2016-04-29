@@ -38,26 +38,29 @@ class ARController : public QObject
 
     Q_PROPERTY(QString controllerType READ controllerType WRITE setControllerType NOTIFY controllerTypeChanged)
     Q_PROPERTY(QString controllerName READ controllerName WRITE setControllerName NOTIFY controllerNameChanged)
+    Q_PROPERTY(QString controllerAddress READ controllerAddress WRITE setControllerAddress NOTIFY controllerAddressChanged)
     Q_PROPERTY(quint16 controllerPort READ controllerPort WRITE setControllerPort NOTIFY controllerPortChanged)
 
-    Q_PROPERTY(ARDiscoveryDevice* device READ device NOTIFY deviceChanged)
-
-    Q_PROPERTY(QString errorString READ errorString NOTIFY error)
+    Q_PROPERTY(ARDiscoveryDevice* discoveryDevice READ discoveryDevice NOTIFY discoveryDeviceChanged)
 
     Q_PROPERTY(ControllerStatus status READ status NOTIFY statusChanged)
 
     Q_PROPERTY(bool isConnected READ isConnected NOTIFY statusChanged)
 
+    Q_PROPERTY(QString errorString READ errorString NOTIFY error)
+
     Q_PROPERTY(QQmlListProperty<ARCommandListener> commandListeners READ commandListeners)
 
     Q_ENUMS(FrameType)
 
-    Q_PROPERTY(bool commsLogEnabled READ commsLogEnabled WRITE setCommsLogEnabled NOTIFY commsLogEnabledChanged)
+    Q_PROPERTY(bool    commsLogEnabled READ commsLogEnabled WRITE setCommsLogEnabled NOTIFY commsLogEnabledChanged)
     Q_PROPERTY(QString commsLogLocation READ commsLogLocation WRITE setCommsLogLocation NOTIFY commsLogEnabledChanged)
 
 public:
     typedef enum {
         Uninitialized = 0,
+        Discovering,
+        DiscoveryError,
         Connecting,
         Connected,
         Disconnected
@@ -82,10 +85,13 @@ public:
     QString controllerName() const;
     Q_INVOKABLE void setControllerName(const QString &controllerName);
 
+    QString controllerAddress() const;
+    void setControllerAddress(const QString &controllerAddress);
+
     quint16 controllerPort() const;
     Q_INVOKABLE void setControllerPort(quint16 controllerPort);
 
-    ARDiscoveryDevice* device() const;
+    ARDiscoveryDevice* discoveryDevice() const;
 
     QString errorString() const;
 
@@ -108,15 +114,14 @@ public:
     QString commsLogLocation() const;
     Q_INVOKABLE void setCommsLogLocation(const QString &location);
 
-
 Q_SIGNALS:
     void controllerTypeChanged();
     void controllerNameChanged();
+    void controllerAddressChanged();
     void controllerPortChanged();
 
-    void deviceChanged();
+    void discoveryDeviceChanged();
     void statusChanged();
-
     void error();
 
     void commandReceived(int project, const QString &className, const QString &command, const QVariantMap &params);
@@ -130,14 +135,14 @@ public Q_SLOTS:
     void shutdown();
 
 protected Q_SLOTS:
+    void onDiscovered(ARDiscoveryDevice *discoveryDevice);
+    void onDiscoveryError();
+
     void d2cRead();
 
     bool sendFrame(quint8 type, quint8 id, const char* data, quint32 dataSize);
     bool sendCommand(ARCommandInfo *command, const QVariantMap &params);
     bool sendCommand(int projId, int classId, int commandId, const QVariantMap &params);
-
-    void onDiscovered(ARDiscoveryDevice *device);
-    void onDiscoveryFailed(const QString &reason);
 
 protected:
     void onPing(const ARFrame &frame);

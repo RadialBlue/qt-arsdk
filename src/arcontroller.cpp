@@ -43,14 +43,26 @@
 struct ARControllerPrivate
 {
     ARControllerPrivate()
-        : device(NULL),
+        : controllerType(ARCONTROLLER_DEFAULT_TYPE),
+          controllerName(QHostInfo::localHostName()),
+          controllerAddress(ARCONTROLLER_DEFAULT_ADDR),
+          controllerPort(ARCONTROLLER_DEFAULT_PORT),
+
           discovery(NULL),
+          discoveryDevice(NULL),
+
+          status(ARController::Uninitialized),
+
           c2d(NULL),
           d2c(NULL),
+
           codec(NULL),
           commands(NULL),
+
           currentCommandListenerId(0),
+
           commsLogEnabled(false),
+
           frameNumber(0),
           hiAck(0),
           loAck(0)
@@ -59,13 +71,16 @@ struct ARControllerPrivate
     // Controller details to report to device.
     QString controllerType;
     QString controllerName;
+    QString controllerAddress;
     quint16 controllerPort;
 
     // Device information and discovery.
-    ARDiscoveryDevice    *device;
-    ARNetDiscovery *discovery;
+    ARNetDiscovery    *discovery;
+    ARDiscoveryDevice *discoveryDevice;
 
-    QString     errorString;
+    ARController::ControllerStatus status;
+
+    QString errorString;
 
     // Low-Level UDP communications handles.
     QUdpSocket *c2d;
@@ -101,11 +116,6 @@ ARController::ARController(QObject *parent)
 {
     TRACE
     Q_D(ARController);
-
-    // Default controller properties.
-    d->controllerType = "qt-arsdk";
-    d->controllerName = QHostInfo::localHostName();
-    d->controllerPort = 43210;
 
     // For encoding/decoding command frame parameters from payloads.
     d->codec = new ARCommandCodec(this);
@@ -164,6 +174,22 @@ void ARController::setControllerName(const QString &controllerName)
     }
 }
 
+QString ARController::controllerAddress() const
+{
+    Q_D(const ARController);
+    return d->controllerAddress;
+}
+
+void ARController::setControllerAddress(const QString &controllerAddress)
+{
+    Q_D(ARController);
+    if(d->controllerAddress != controllerAddress)
+    {
+        d->controllerAddress = controllerAddress;
+        emit controllerAddressChanged();
+    }
+}
+
 quint16 ARController::controllerPort() const
 {
     Q_D(const ARController);
@@ -181,10 +207,10 @@ void ARController::setControllerPort(quint16 controllerPort)
     }
 }
 
-ARDiscoveryDevice* ARController::device() const
+ARDiscoveryDevice* ARController::discoveryDevice() const
 {
     Q_D(const ARController);
-    return d->device;
+    return d->discoveryDevice;
 }
 
 QString ARController::errorString() const
@@ -196,23 +222,13 @@ QString ARController::errorString() const
 ARController::ControllerStatus ARController::status() const
 {
     Q_D(const ARController);
-
-    if(d->discovery != NULL)
-    {
-        return ARController::Connecting;
-    }
-    else if(d->device != NULL && d->c2d != NULL && d->d2c != NULL)
-    {
-        return ARController::Connected;
-    }
-
-    return ARController::Disconnected;
+    return d->status;
 }
 
 bool ARController::isConnected() const
 {
     Q_D(const ARController);
-    return d->device != NULL && d->c2d != NULL;
+    return d->discoveryDevice != NULL && d->c2d != NULL;
 }
 
 bool ARController::commsLogEnabled() const
@@ -280,18 +296,23 @@ bool ARController::connectToDevice(const QString &address, quint16 port)
     }
 
     // Setup UDP port for D2C comms.
+    DEBUG_T("Creating D2C UDP communications...")
     d->d2c = new QUdpSocket(this);
-    d->d2c->bind(QHostAddress::Any, d->controllerPort);
+    d->d2c->bind(QHostAddress(d->controllerAddress), d->controllerPort);
 
     QObject::connect(d->d2c, SIGNAL(readyRead()), this, SLOT(d2cRead()));
 
+    DEBUG_T("Creating network discovery connector...")
     // Setup TCP discovery connector.
     d->discovery = new ARNetDiscovery(this);
-    d->discovery->connectToHost(address, port);
 
     QObject::connect(d->discovery, SIGNAL(discovered(ARDiscoveryDevice*)), this, SLOT(onDiscovered(ARDiscoveryDevice*)));
-    QObject::connect(d->discovery, SIGNAL(failed(QString)), this, SLOT(onDiscoveryFailed(QString)));
+    QObject::connect(d->discovery, SIGNAL(error()), this, SLOT(onDiscoveryError()));
 
+    DEBUG_T(QString("Attempting discovery of %1:%2").arg(address).arg(port));
+    d->discovery->connectToHost(address, port);
+
+    d->status = ARController::Discovering;
     emit statusChanged();
     return true;
 }
@@ -325,11 +346,11 @@ void ARController::shutdown()
         d->d2c = NULL;
     }
 
-    if(d->device)
+    if(d->discoveryDevice)
     {
         DEBUG_T("Destroying device handle.");
-        d->device->deleteLater();
-        d->device = NULL;
+        d->discoveryDevice->deleteLater();
+        d->discoveryDevice = NULL;
     }
 
     emit statusChanged();
@@ -339,7 +360,7 @@ void ARController::onDiscovered(ARDiscoveryDevice *device)
 {
     TRACE
     Q_D(ARController);
-    d->device = device;
+    d->discoveryDevice = device;
 
     // Setup UDP port for C2D comms.
     d->c2d = new QUdpSocket(this);
@@ -348,10 +369,12 @@ void ARController::onDiscovered(ARDiscoveryDevice *device)
 
     d->discovery->deleteLater();
     d->discovery = NULL;
+
+    d->status = ARController::Connecting;
     emit statusChanged();
 }
 
-void ARController::onDiscoveryFailed(const QString &reason)
+void ARController::onDiscoveryError()
 {
     TRACE
     Q_D(ARController);
@@ -359,12 +382,13 @@ void ARController::onDiscoveryFailed(const QString &reason)
     d->d2c->deleteLater();
     d->d2c = NULL;
 
+    d->errorString = d->discovery->errorString();
+    emit error();
+
     d->discovery->deleteLater();
     d->discovery = NULL;
 
-    d->errorString = reason;
-
-    emit error();
+    d->status = ARController::DiscoveryError;
     emit statusChanged();
 }
 
@@ -495,6 +519,8 @@ void ARController::d2cRead()
     {
         QHostAddress remoteAddr;
         quint16      remotePort;
+
+        d->status = ARController::Connected;
 
         if(d->d2c->pendingDatagramSize() < ARNETWORK_FRAME_HEADER_SIZE) {
             WARNING_T("Datagram incomplete?");
