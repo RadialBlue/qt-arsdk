@@ -90,9 +90,12 @@ void ARNetDiscovery::shutdown()
     TRACE
     Q_D(ARNetDiscovery);
 
-    d->socket->close();
-    d->socket->deleteLater();
-    d->socket = NULL;
+    if(d->socket != NULL)
+    {
+        d->socket->close();
+        d->socket->deleteLater();
+        d->socket = NULL;
+    }
 }
 
 void ARNetDiscovery::onSocketError()
@@ -132,9 +135,6 @@ void ARNetDiscovery::onSocketReadyRead()
     Q_D(ARNetDiscovery);
 
     QByteArray data = d->socket->readAll();
-    d->socket->close();
-    d->socket->deleteLater();
-    d->socket = NULL;
 
     DEBUG_T(QString("RX: %1").arg(QString(data)));
 
@@ -143,30 +143,31 @@ void ARNetDiscovery::onSocketReadyRead()
     // Parse handshake response message.
     QJsonParseError parseError;
     QJsonDocument mesg = QJsonDocument::fromJson(data, &parseError);
+
     if(parseError.error != QJsonParseError::NoError) {
         WARNING_T(QString("KEY Parse Error: %1").arg(parseError.errorString()));
-
         d->errorString = "Failed to parse incoming message: " + parseError.errorString();
         emit error();
-        return;
-    }
-
-    // Check return status of handshake response message.
-    QJsonObject props = mesg.object();
-    if(props.value("status").toInt(1) == 0)
-    {
-        // Build discovery device instance.
-        ARDiscoveryDevice *device = new ARDiscoveryDevice(d->controller);
-        device->setAddress(d->socket->peerAddress().toString());
-        device->setParameters(props);
-
-        DEBUG_T("Successfully discovered device!");
-        emit discovered(device);
     }
     else
     {
-        d->errorString = "Handshake returned error status.";
-        emit error();
+        // Check return status of handshake response message.
+        QJsonObject props = mesg.object();
+        if(props.value("status").toInt(1) == 0)
+        {
+            // Build discovery device instance.
+            ARDiscoveryDevice *device = new ARDiscoveryDevice(d->controller);
+            device->setAddress(d->socket->peerAddress().toString());
+            device->setParameters(props);
+
+            DEBUG_T("Successfully discovered device!");
+            emit discovered(device);
+        }
+        else
+        {
+            d->errorString = "Handshake returned error status.";
+            emit error();
+        }
     }
 
     shutdown();
