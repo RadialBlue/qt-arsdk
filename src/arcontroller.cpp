@@ -21,10 +21,10 @@
 #include "arcontroller.h"
 #include "common.h"
 
-#include "ardiscoverydevice.h"
 #include "arnetdiscovery.h"
+#include "ardiscoverydevice.h"
+#include "arcontrolconnection.h"
 
-#include "arcommandcodec.h"
 #include "arcommanddictionary.h"
 #include "arcommandlistener.h"
 
@@ -51,21 +51,13 @@ struct ARControllerPrivate
           discovery(NULL),
           discoveryDevice(NULL),
 
-          status(ARController::Uninitialized),
-
-          c2d(NULL),
-          d2c(NULL),
-
-          codec(NULL),
-          commands(NULL),
+          connection(NULL),
 
           currentCommandListenerId(0),
 
-          commsLogEnabled(false),
+          status(ARController::Uninitialized),
 
-          frameNumber(0),
-          hiAck(0),
-          loAck(0)
+          commsLogEnabled(false)
     {/* ... */}
 
     // Controller details to report to device.
@@ -75,40 +67,25 @@ struct ARControllerPrivate
     quint16 controllerPort;
 
     // Device information and discovery.
-    ARNetDiscovery    *discovery;
-    ARDiscoveryDevice *discoveryDevice;
+    ARNetDiscovery      *discovery;
+    ARDiscoveryDevice   *discoveryDevice;
 
-    ARController::ControllerStatus status;
-
-    QString errorString;
-
-    // Low-Level UDP communications handles.
-    QUdpSocket *c2d;
-    QUdpSocket *d2c;
-
-    // TODO: Refactor out to NavdataCommandProcessor
-    // Command resolution, parsing and processing data.
-    ARCommandCodec       *codec;
-    ARCommandDictionary  *commands;
+    // Device control connection.
+    ARControlConnection *connection;
 
     QList<ARCommandListener*> listeners;
-
     // Command listener ID counter.
     int currentCommandListenerId;
 
-    // Stores the current sequence ids for each navdata buffer.
-    QHash<quint8, quint8> sequenceIds;
+    // Controller status.
+    ARController::ControllerStatus status;
+
+    QString errorString;
 
     // TODO: Refactor out to Logger
     QFile commsLog;
     bool commsLogEnabled;
     QString commsLogLocation;
-
-    // TODO: Refactor out into FrameDataProcessor (This is deprecated, StreamV2 ftw)
-    // Video data properties.
-    quint16 frameNumber;
-    quint64 hiAck;
-    quint64 loAck;
 };
 
 ARController::ARController(QObject *parent)
@@ -116,17 +93,6 @@ ARController::ARController(QObject *parent)
 {
     TRACE
     Q_D(ARController);
-
-    // For encoding/decoding command frame parameters from payloads.
-    d->codec = new ARCommandCodec(this);
-
-    // Navdata command introspection specs used by ARCommandCodec to encode/decode
-    // datagrams.
-    d->commands = new ARCommandDictionary(this);
-    d->commands->import(":/ARSDK/packages/libARCommands/Xml/ARDrone3_commands.xml");
-    d->commands->import(":/ARSDK/packages/libARCommands/Xml/common_commands.xml");
-    d->commands->import(":/ARSDK/packages/libARCommands/Xml/common_debug.xml");
-    d->commands->import(":/ARSDK/packages/libARCommands/Xml/SkyController_commands.xml");
 
     //TODO: Refactor into separate "Logger" module.
     QDir logdir = QDir(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation));
@@ -207,10 +173,58 @@ void ARController::setControllerPort(quint16 controllerPort)
     }
 }
 
+QQmlListProperty<ARCommandListener> ARController::commandListeners()
+{
+    Q_D(ARController);
+    return QQmlListProperty<ARCommandListener>(this, d->listeners);
+}
+
+int ARController::appendCommandListener(const QString &command, QVariant param)
+{
+    Q_D(ARController);
+
+    // Check that provided parameter is invokable.
+    QJSValue jsvalue;
+    if(param.userType() != qMetaTypeId<QJSValue>()) return -1;
+    jsvalue = param.value<QJSValue>();
+    if(!jsvalue.isCallable()) return -1;
+
+    // Build command listener.
+    ARCommandListener *listener = new ARCommandListener(this);
+    listener->setListenerId(d->currentCommandListenerId++);
+    listener->setCommandName(command);
+    listener->setCallback(param);
+
+    // Register command listener
+    d->listeners.append(listener);
+    emit commandListenersChanged();
+
+    return d->currentCommandListenerId - 1;
+}
+
+void ARController::removeCommandListener(int handlerId)
+{
+    Q_D(ARController);
+    foreach(ARCommandListener *target, d->listeners) {
+        if(target->listenerId() == handlerId)
+        {
+            d->listeners.removeOne(target);
+            emit commandListenersChanged();
+            break;
+        }
+    }
+}
+
 ARDiscoveryDevice* ARController::discoveryDevice() const
 {
     Q_D(const ARController);
     return d->discoveryDevice;
+}
+
+ARControlConnection* ARController::connection() const
+{
+    Q_D(const ARController);
+    return d->connection;
 }
 
 QString ARController::errorString() const
@@ -228,7 +242,7 @@ ARController::ControllerStatus ARController::status() const
 bool ARController::isConnected() const
 {
     Q_D(const ARController);
-    return d->discoveryDevice != NULL && d->c2d != NULL;
+    return d->status == ARController::Connected;
 }
 
 bool ARController::commsLogEnabled() const
@@ -236,44 +250,6 @@ bool ARController::commsLogEnabled() const
     Q_D(const ARController);
     return d->commsLogEnabled;
 }
-
-QQmlListProperty<ARCommandListener> ARController::commandListeners()
-{
-    Q_D(ARController);
-    return QQmlListProperty<ARCommandListener>(this, d->listeners);
-}
-
-int ARController::appendCommandListener(int projId, const QString &className, const QString &command, QVariant param)
-{
-    Q_D(ARController);
-
-    // Check that provided parameter is invokable.
-    QJSValue jsvalue;
-    if(param.userType() != qMetaTypeId<QJSValue>()) return -1;
-    jsvalue = param.value<QJSValue>();
-    if(!jsvalue.isCallable()) return -1;
-
-    // Build command listener.
-    ARCommandListener *listener = new ARCommandListener(this);
-    listener->setProjectId(projId);
-    listener->setClassName(className);
-    listener->setCommandName(command);
-    listener->setListenerId(d->currentCommandListenerId++);
-    listener->setCallback(param);
-
-    // Register command listener
-    d->listeners.append(listener);
-    return d->currentCommandListenerId - 1;
-}
-
-void ARController::removeCommandListener(int handlerId)
-{
-    Q_D(ARController);
-    foreach(ARCommandListener *target, d->listeners) {
-        if(target->listenerId() == handlerId) d->listeners.removeOne(target);
-    }
-}
-
 bool ARController::connectToDevice(const QString &address, quint16 port)
 {
     TRACE
@@ -295,13 +271,6 @@ bool ARController::connectToDevice(const QString &address, quint16 port)
         return false;
     }
 
-    // Setup UDP port for D2C comms.
-    DEBUG_T("Creating D2C UDP communications...")
-    d->d2c = new QUdpSocket(this);
-    d->d2c->bind(QHostAddress(d->controllerAddress), d->controllerPort);
-
-    QObject::connect(d->d2c, SIGNAL(readyRead()), this, SLOT(d2cRead()));
-
     DEBUG_T("Creating network discovery connector...")
     // Setup TCP discovery connector.
     d->discovery = new ARNetDiscovery(this);
@@ -322,7 +291,7 @@ void ARController::shutdown()
     TRACE
     Q_D(ARController);
 
-    if(d->discovery)
+    if(d->discovery != NULL)
     {
         DEBUG_T("Destroying device discovery connector.");
         d->discovery->shutdown();
@@ -330,29 +299,21 @@ void ARController::shutdown()
         d->discovery = NULL;
     }
 
-    if(d->c2d)
-    {
-        DEBUG_T("Destroying C2D UDP socket.");
-        d->c2d->close();
-        d->c2d->deleteLater();
-        d->c2d = NULL;
-    }
-
-    if(d->d2c)
-    {
-        DEBUG_T("Destroying D2C UDP socket.");
-        d->d2c->close();
-        d->d2c->deleteLater();
-        d->d2c = NULL;
-    }
-
-    if(d->discoveryDevice)
+    if(d->discoveryDevice != NULL)
     {
         DEBUG_T("Destroying device handle.");
         d->discoveryDevice->deleteLater();
         d->discoveryDevice = NULL;
     }
 
+    if(d->connection != NULL)
+    {
+        DEBUG_T("Destroying control connection.");
+        d->connection->deleteLater();
+        d->connection = NULL;
+    }
+
+    d->status = ARController::Disconnected;
     emit statusChanged();
 }
 
@@ -361,17 +322,16 @@ void ARController::onDiscovered(ARDiscoveryDevice *device)
     TRACE
     Q_D(ARController);
     d->discoveryDevice = device;
-
-    // Setup UDP port for C2D comms.
-    d->c2d = new QUdpSocket(this);
-    d->c2d->connectToHost(device->address(),
-                          device->parameters().value(ARDISCOVERY_KEY_C2DPORT).toInt());
-
     d->discovery->deleteLater();
     d->discovery = NULL;
 
+    DEBUG_T("Device discovered, connecting...");
+    d->connection = new ARControlConnection(this);
+
     d->status = ARController::Connecting;
     emit statusChanged();
+
+    emit connectionChanged();
 }
 
 void ARController::onDiscoveryError()
@@ -379,8 +339,7 @@ void ARController::onDiscoveryError()
     TRACE
     Q_D(ARController);
 
-    d->d2c->deleteLater();
-    d->d2c = NULL;
+    DEBUG_T(QString("Discovery failed: %1").arg(d->discovery->errorString()));
 
     d->errorString = d->discovery->errorString();
     emit error();
@@ -392,283 +351,14 @@ void ARController::onDiscoveryError()
     emit statusChanged();
 }
 
-bool ARController::sendFrame(quint8 type, quint8 id, const char* data, quint32 dataSize)
+void ARController::onCommandReceived(const ARCommandInfo &command, const QVariantMap &params)
 {
     TRACE
-    Q_D(ARController);
-
-    if(!d->c2d)
-    {
-        d->errorString = "Not connected to remote device";
-        WARNING_T(d->errorString);
-        emit error();
-        return false;
-    }
-
-    QByteArray datagram(ARNETWORK_FRAME_HEADER_SIZE + dataSize, 0x00);
-    QDataStream stream(&datagram, QIODevice::WriteOnly);
-
-    if(!d->sequenceIds.contains(id)) d->sequenceIds.insert(id, 0x00);
-
-    stream.setByteOrder(QDataStream::LittleEndian);
-    // Frame Header
-    stream  << type
-            << id
-            << d->sequenceIds.value(id)
-            << (quint32)datagram.size();
-
-    // If we have payload data, write to buffer.
-    if(dataSize > 0) stream.writeRawData(data, dataSize);
-
-    qint64 result = d->c2d->write(datagram.constData(), datagram.size());
-
-    if(result != datagram.size())
-    {
-        // Should probably implement a retry timer, maybe queue based datagram sending.
-        d->errorString = QString("TX ERROR:").arg(d->c2d->errorString());
-        WARNING_T(d->errorString);
-        emit error();
-        return false;
-    }
-
-    if(type != ARController::LowLatencyData)
-    {
-        DEBUG_T(QString(">> %1:%2 [%3]")
-                .arg(d->c2d->peerAddress().toString())
-                .arg(d->c2d->peerPort())
-                .arg(QString(datagram.toHex())));
-    }
-
-    d->sequenceIds.insert(id, d->sequenceIds.value(id) + 1);
-    return true;
-}
-
-bool ARController::sendCommand(ARCommandInfo *command, const QVariantMap &params)
-{
-    TRACE
-    Q_D(ARController);
-
-    // Get encoded parameters for specified command.
-    QByteArray paramData = d->codec->encode(command, params);
-
-    // Encode command header and data into payload.
-    QByteArray payload(ARNETWORK_COMMAND_HEADER_SIZE + paramData.size(), 0x00);
-    QDataStream stream(&payload, QIODevice::WriteOnly);
-
-    stream.setByteOrder(QDataStream::LittleEndian);
-
-    stream << (quint8)command->klass->project;
-    stream << (quint8)command->klass->id;
-    stream << (quint16)command->id;
-
-    stream.writeRawData(paramData.constData(), paramData.length());
-
-    // Push frame for transmission.
-    if(!sendFrame(ARController::Data, command->bufferId, payload.constData(), payload.size())) return false;
-    return true;
-}
-
-bool ARController::sendCommand(int projId, int classId, int commandId, const QVariantMap &params)
-{
-    TRACE
-    Q_D(ARController);
-
-    ARCommandInfo *command = d->commands->find(projId, classId, commandId);
-    if(!command)
-    {
-        d->errorString = "Failed to construct unknown command";
-        WARNING_T(d->errorString);
-        emit error();
-        return false;
-    }
-
-    return sendCommand(command, params);
-}
-
-bool ARController::sendCommand(int projId, const QString &className, const QString &commandName, const QVariantMap &params)
-{
-    TRACE
-    Q_D(ARController);
-
-    ARCommandInfo *command = d->commands->find(projId, className, commandName);
-    if(!command)
-    {
-        d->errorString = "Failed to construct unknown command";
-        WARNING_T(d->errorString);
-        emit error();
-        return false;
-    }
-
-    return sendCommand(command, params);
-}
-
-struct ARFrame {
-    quint8     type;
-    quint8     id;
-    quint8     seq;
-    quint32    size;
-    QByteArray payload;
-};
-
-void ARController::d2cRead()
-{
-    TRACE
-    Q_D(ARController);
-
-    while(d->d2c->hasPendingDatagrams())
-    {
-        QHostAddress remoteAddr;
-        quint16      remotePort;
-
-        d->status = ARController::Connected;
-
-        if(d->d2c->pendingDatagramSize() < ARNETWORK_FRAME_HEADER_SIZE) {
-            WARNING_T("Datagram incomplete?");
-            return;
-        }
-
-        QByteArray datagram(d->d2c->pendingDatagramSize(), 0x00);
-        qint32 frameOffset = 0;
-
-        d->d2c->readDatagram(datagram.data(), datagram.size(), &remoteAddr, &remotePort);
-
-        if(d->commsLog.isOpen()) {
-            qint64 timestamp = QDateTime::currentMSecsSinceEpoch();
-            d->commsLog.write(QString::number(timestamp).toLatin1());
-            d->commsLog.write("\n");
-            d->commsLog.write(datagram.toBase64());
-            d->commsLog.write("\n\n");
-            d->commsLog.flush();
-        }
-
-        // While we still have frame data to process.
-        while(frameOffset < datagram.size())
-        {
-            ARFrame frame;
-            frame.type = static_cast<quint8>(datagram[frameOffset + 0]);
-            frame.id   = static_cast<quint8>(datagram[frameOffset + 1]);
-            frame.seq  = static_cast<quint8>(datagram[frameOffset + 2]);
-            frame.size = qFromLittleEndian(*((quint32*)(datagram.constData() + frameOffset + 3)));
-
-            // Test frame size for potential payload and copy if present.
-            if(frame.size > ARNETWORK_FRAME_HEADER_SIZE)
-            {
-                const char *data = datagram.constData();
-                frame.payload.insert(0, data + frameOffset + ARNETWORK_FRAME_HEADER_SIZE, frame.size - ARNETWORK_FRAME_HEADER_SIZE);
-            }
-
-            if(frame.id != ARNET_D2C_VIDEO_DATA_ID)
-            {
-                QString debugOut(datagram.toHex());
-                DEBUG_T(QString("<< %1:%2 [%3]")
-                        .arg(remoteAddr.toString())
-                        .arg(remotePort)
-                        .arg(QString(datagram.toHex())));
-            }
-
-            // Process frame depending on buffer id.
-            if(frame.id == ARNET_D2C_PING_ID)
-            {
-                onPing(frame);
-            }
-            else if(frame.id == ARNET_D2C_EVENT_ID || frame.id == ARNET_D2C_NAVDATA_ID)
-            {
-                onNavdata(frame);
-            }
-            else if(frame.id == ARNET_D2C_VIDEO_DATA_ID)
-            {
-                onVideoData(frame);
-                break;
-            }
-            else
-            {
-                WARNING_T(QString("Unhandled frame type: %1").arg(frame.id));
-            }
-
-            // Increment datagram offset for next frame.
-            frameOffset += frame.size;
-        }
-    }
-}
-
-// TODO: Keep-Alive timer for connectivity monitoring.
-//       Monitor latency/frequency for signal quality.
-void ARController::onPing(const ARFrame &frame)
-{
-    TRACE
-    Q_D(ARController);
-
-    if(!d->c2d)
-    {
-        WARNING_T("Not connected to remote device.");
-        return;
-    }
-
-    QByteArray response(frame.size, 0x00);
-    QDataStream datastream(&response, QIODevice::WriteOnly);
-
-    // Construct reply.
-    datastream.setByteOrder(QDataStream::LittleEndian);
-    datastream
-            << frame.type
-            << (quint8)ARNET_C2D_PONG_ID
-            << frame.seq
-            << frame.size;
-
-    datastream.writeRawData(frame.payload.data(), frame.payload.size());
-
-    DEBUG_T(QString(">> PONG %1:%2 [%3]")
-            .arg(d->c2d->peerAddress().toString())
-            .arg(d->c2d->peerPort())
-            .arg(QString(response.toHex())));
-
-    // Send frame to device.
-    d->c2d->write(response);
-}
-
-void ARController::onNavdata(const ARFrame &frame)
-{
-    TRACE
-    Q_D(ARController);
-
-    if(frame.type == ARController::AcknowledgeData)
-    {
-        QByteArray payload(1, 0x00);
-        QDataStream datastream(&payload, QIODevice::WriteOnly);
-
-        // Construct reply.
-        datastream.setByteOrder(QDataStream::LittleEndian);
-        datastream << (quint8)frame.seq;
-
-        sendFrame(ARController::Acknowledge, ARNET_C2D_NAVDATA_ACK_ID, payload.constData(), payload.size());
-    }
-
-    // Decode command header.
-    quint8  project  = static_cast<quint8>(frame.payload[0]);
-    quint8  klass    = static_cast<quint8>(frame.payload[1]);
-    quint16 id       = qFromLittleEndian(static_cast<quint16>(frame.payload[2]));
-    const char *data = frame.payload.data() + 4;
-
-    // Resolve command meta-type information.
-    ARCommandInfo *command = d->commands->find(project, klass, id);
-    if(command == NULL)
-    {
-        d->errorString = QString("Unrecognised command: %1 %2 %3")
-                .arg(project)
-                .arg(klass)
-                .arg(id);
-        DEBUG_T(d->errorString);
-        emit error();
-        return;
-    }
-
-    // Use command codec to decode command parameters.
-    QVariantMap params = d->codec->decode(command, data);
-    DEBUG_T(QString("Decoded Command %1 %2 %3").arg(command->klass->project).arg(command->klass->name).arg(command->name));
+    Q_D(const ARController);
 
     foreach(ARCommandListener *listener, d->listeners)
     {
-        if(listener->projectId() == command->klass->project && listener->className() == command->klass->name && listener->commandName() == command->name)
+        if(listener->commandName() == command.name)
         {
             if(!listener->callback().isNull()) {
                 QJSValue callback = qvariant_cast<QJSValue>(listener->callback());
@@ -684,80 +374,6 @@ void ARController::onNavdata(const ARFrame &frame)
             emit listener->received(params);
         }
     }
-
-    emit commandReceived(command->klass->project, command->klass->name, command->name, params);
-}
-
-void ARController::onVideoData(const ARFrame &frame)
-{
-    TRACE
-    Q_D(ARController);
-
-    quint16 frameNumber = qFromLittleEndian(*((quint16*)(frame.payload.constData())));
-    quint8  frameFlags = static_cast<quint8>(frame.payload[2]);
-    quint8  fragmentNumber = static_cast<quint8>(frame.payload[3]);
-    quint8  fragsPerFrame = static_cast<quint8>(frame.payload[4]);
-
-    if(frameNumber != d->frameNumber)
-    {
-        if(frameFlags == 0x01)
-        {
-            DEBUG_T(QString("Video Key Frame Header [%1] (%2 %3 %4)")
-                    .arg(QString(QByteArray().append(frame.payload.constData(), 5).toHex()))
-                    .arg(frameNumber)
-                    .arg(fragmentNumber)
-                    .arg(fragsPerFrame));
-        }
-        /*else
-        {
-            DEBUG_T(QString("Video Frame Header (%2 %3 %4)")
-                    .arg(frameNumber)
-                    .arg(fragmentNumber)
-                    .arg(fragsPerFrame));
-        }*/
-
-        if(fragsPerFrame < 64)
-        {
-            d->hiAck = 0xffffffffffffffff;
-            d->loAck = 0xffffffffffffffff << fragsPerFrame;
-        }
-        else if(fragsPerFrame < 128)
-        {
-            d->hiAck = 0xffffffffffffffff << (fragsPerFrame - 64);
-            d->loAck = 0ll;
-        }
-        else
-        {
-            d->hiAck = 0ll;
-            d->loAck = 0ll;
-        }
-
-        d->frameNumber = frameNumber;
-    }
-
-    if(fragmentNumber < 64)
-    {
-        d->loAck |= (1ll << fragmentNumber);
-    }
-    else if(fragmentNumber < 128)
-    {
-        d->hiAck |= (1ll << (fragmentNumber - 64));
-    }
-
-    // Construct reply.
-    QByteArray payload(2 + 8 + 8, 0x00);
-    QDataStream datastream(&payload, QIODevice::WriteOnly);
-
-    if(!d->sequenceIds.contains(ARNET_C2D_VIDEO_ACK_ID))
-        d->sequenceIds.insert(ARNET_C2D_VIDEO_ACK_ID, 0x00);
-
-    datastream.setByteOrder(QDataStream::LittleEndian);
-    datastream
-            << (quint16)frameNumber
-            << (quint64)d->hiAck
-            << (quint64)d->loAck;
-
-    sendFrame(ARController::LowLatencyData, ARNET_C2D_VIDEO_ACK_ID, payload.constData(), payload.size());
 }
 
 void ARController::setCommsLogEnabled(bool enabled)

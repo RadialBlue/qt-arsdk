@@ -18,6 +18,7 @@ HEADERS += \
     $$PWD/src/arcommandcodec.h \
     $$PWD/src/arcommanddictionary.h \
     $$PWD/src/arcommandlistener.h \
+    $$PWD/src/arcontrolconnection.h \
     $$PWD/src/arcontroller.h \
     $$PWD/src/arsdk_plugin.h
 
@@ -27,6 +28,7 @@ SOURCES += \
     $$PWD/src/arcommandcodec.cpp \
     $$PWD/src/arcommanddictionary.cpp \
     $$PWD/src/arcommandlistener.cpp \
+    $$PWD/src/arcontrolconnection.cpp \
     $$PWD/src/arcontroller.cpp \
     $$PWD/src/arsdk_plugin.cpp
 

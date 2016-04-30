@@ -23,6 +23,7 @@
 #include <qqml.h>
 
 #include "arcontroller.h"
+#include "arcontrolconnection.h"
 #include "arcommandlistener.h"
 #include "ardiscoverydevice.h"
 
@@ -30,6 +31,7 @@ void ARSDKPlugin::registerTypes(const char *uri)
 {
     // @uri arsdk
     qmlRegisterType<ARController>(uri, 1, 0, "ARController");
+    qmlRegisterUncreatableType<ARControlConnection>(uri, 1, 0, "ARControlConnection", "Uncreatable type");
     qmlRegisterType<ARCommandListener>(uri, 1, 0, "ARCommandListener");
-    qmlRegisterType<ARDiscoveryDevice>(uri, 1, 0, "ARDevice");
+    qmlRegisterType<ARDiscoveryDevice>(uri, 1, 0, "ARDiscoveryDevice");
 }

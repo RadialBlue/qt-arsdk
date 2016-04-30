@@ -22,26 +22,27 @@
 #define ARCONTROLLER_H
 
 #include <QObject>
-#include <QJSValue>
 #include <QQmlListProperty>
 
 class ARDiscoveryDevice;
+class ARControlConnection;
+
 class ARCommandInfo;
 class ARCommandListener;
-class ARFrame;
 
 class ARController : public QObject
 {
     Q_OBJECT
-
-    Q_CLASSINFO("DefaultProperty", "commandListeners")
 
     Q_PROPERTY(QString controllerType READ controllerType WRITE setControllerType NOTIFY controllerTypeChanged)
     Q_PROPERTY(QString controllerName READ controllerName WRITE setControllerName NOTIFY controllerNameChanged)
     Q_PROPERTY(QString controllerAddress READ controllerAddress WRITE setControllerAddress NOTIFY controllerAddressChanged)
     Q_PROPERTY(quint16 controllerPort READ controllerPort WRITE setControllerPort NOTIFY controllerPortChanged)
 
+    Q_PROPERTY(QQmlListProperty<ARCommandListener> commandListeners READ commandListeners NOTIFY commandListenersChanged)
+
     Q_PROPERTY(ARDiscoveryDevice* discoveryDevice READ discoveryDevice NOTIFY discoveryDeviceChanged)
+    Q_PROPERTY(ARControlConnection* connection READ connection NOTIFY connectionChanged)
 
     Q_PROPERTY(ControllerStatus status READ status NOTIFY statusChanged)
 
@@ -49,12 +50,10 @@ class ARController : public QObject
 
     Q_PROPERTY(QString errorString READ errorString NOTIFY error)
 
-    Q_PROPERTY(QQmlListProperty<ARCommandListener> commandListeners READ commandListeners)
-
-    Q_ENUMS(FrameType)
-
     Q_PROPERTY(bool    commsLogEnabled READ commsLogEnabled WRITE setCommsLogEnabled NOTIFY commsLogEnabledChanged)
     Q_PROPERTY(QString commsLogLocation READ commsLogLocation WRITE setCommsLogLocation NOTIFY commsLogEnabledChanged)
+
+    friend class ARControlConnection;
 
 public:
     typedef enum {
@@ -66,15 +65,6 @@ public:
         Disconnected
     } ControllerStatus;
     Q_ENUMS(ControllerStatus)
-
-    // TODO: Remove ...
-    typedef enum {
-        NotInitialized = 0,
-        Acknowledge,
-        Data,
-        LowLatencyData,
-        AcknowledgeData
-    } FrameType;
 
     explicit ARController(QObject *parent = 0);
             ~ARController();
@@ -91,21 +81,20 @@ public:
     quint16 controllerPort() const;
     Q_INVOKABLE void setControllerPort(quint16 controllerPort);
 
+    // TODO: Remove (Needs to be refactored into different device API modules)
+    QQmlListProperty<ARCommandListener> commandListeners();
+
+    Q_INVOKABLE int  appendCommandListener(const QString &command, QVariant callback);
+    Q_INVOKABLE void removeCommandListener(int handlerId);
+
     ARDiscoveryDevice* discoveryDevice() const;
+    ARControlConnection* connection() const;
 
     QString errorString() const;
 
     ControllerStatus status() const;
 
     bool isConnected() const;
-
-    // TODO: Remove (Needs to be refactored into different device API modules)
-    QQmlListProperty<ARCommandListener> commandListeners(); // QML Property
-    Q_INVOKABLE int  appendCommandListener(int projId, const QString &className, const QString &command, QVariant callback);
-    Q_INVOKABLE void removeCommandListener(int handlerId);
-
-    // TODO: Remove (Needs to be replaced with proper device API modules)
-    Q_INVOKABLE bool sendCommand(int projId, const QString &className, const QString &command, const QVariantMap &params);
 
     // TODO: Move into separate Logger module.
     bool commsLogEnabled() const;
@@ -120,12 +109,14 @@ Q_SIGNALS:
     void controllerAddressChanged();
     void controllerPortChanged();
 
-    void discoveryDeviceChanged();
-    void statusChanged();
-    void error();
+    void commandListenersChanged();
 
-    void commandReceived(int project, const QString &className, const QString &command, const QVariantMap &params);
-    void videoFrameData(const QByteArray &data, bool isKey);
+    void discoveryDeviceChanged();
+    void connectionChanged();
+
+    void statusChanged();
+
+    void error();
 
     void commsLogEnabledChanged();
     void commsLogLocationChanged();
@@ -138,16 +129,7 @@ protected Q_SLOTS:
     void onDiscovered(ARDiscoveryDevice *discoveryDevice);
     void onDiscoveryError();
 
-    void d2cRead();
-
-    bool sendFrame(quint8 type, quint8 id, const char* data, quint32 dataSize);
-    bool sendCommand(ARCommandInfo *command, const QVariantMap &params);
-    bool sendCommand(int projId, int classId, int commandId, const QVariantMap &params);
-
-protected:
-    void onPing(const ARFrame &frame);
-    void onNavdata(const ARFrame &frame);
-    void onVideoData(const ARFrame &frame);
+    void onCommandReceived(const ARCommandInfo &command, const QVariantMap &params);
 
 private:
     class ARControllerPrivate *d_ptr;
